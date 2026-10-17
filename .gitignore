@@ -1,0 +1,8 @@
+# 本地运行产物 / 编辑器临时文件，不要提交
+*.log
+*.tmp
+*.bak
+Thumbs.db
+.DS_Store
+node_modules/
+__pycache__/

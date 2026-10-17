@@ -1,0 +1,77 @@
+========================================================================
+DSH × dsh-purge「{{cwd}}」修复 —— 命令清单
+========================================================================
+
+【不会敲命令？直接双击根目录的 .cmd】
+
+  0-先体检.cmd            只读检查，不改任何文件
+  1-一键修复.cmd          打补丁（先 Ctrl+C 关掉 dsh web）
+  2-验证对话.cmd          临时启动 dsh web 发测试消息（消耗少量 token）
+  3-回滚至报错状态.cmd     撤销补丁，恢复打补丁前的自动备份（之后会重新报 {{cwd}}，属预期）
+  4-启动dsh-web.cmd       启动 dsh web（窗口别关）
+  5-停用插件.cmd          停用 dsh-purge（可回溯）
+  6-重新启用插件.cmd      恢复被停用的插件
+  7-卸载插件.cmd          彻底卸载 dsh-purge（不可逆，先快照）
+
+日常顺序：
+  出问题 → 0 体检 → 1 修复 → 4 启动 → 需要彻底确认再 2 验证
+  想撤销修复 → 3
+  不想用插件 → 5（可恢复）或 7（彻底删）
+
+========================================================================
+【PowerShell 命令】
+========================================================================
+
+-- 环境变量（按需）----------------------------------------------------
+# DSH_HOME 未设置时默认是 %USERPROFILE%\.dsh
+$dshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $env:USERPROFILE ".dsh" }
+$lib = Join-Path $dshHome "profiles\web\node_modules\dsh-purge\lib"
+
+-- 版本 ---------------------------------------------------------------
+dsh --version
+node -v
+
+-- 体检（只读）--------------------------------------------------------
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\diagnose.ps1"
+
+-- 打补丁 / 只检查 -----------------------------------------------------
+node ".\scripts\reapply-fix.mjs"
+node ".\scripts\reapply-fix.mjs" --dry-run
+
+-- 指定其它 profile / 插件目录 ----------------------------------------
+node ".\scripts\reapply-fix.mjs" --profile tui
+node ".\scripts\reapply-fix.mjs" --lib-dir "C:\path\to\node_modules\dsh-purge\lib"
+
+-- 撤销补丁（恢复打补丁前自动备份）------------------------------------
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\rollback.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\rollback.ps1" -DryRun
+
+-- 端到端验证（会调一次模型）------------------------------------------
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\verify-dsh-web.ps1"
+
+-- 停用 / 重新启用 / 彻底卸载 -----------------------------------------
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\disable-plugin.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\enable-plugin.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\uninstall-plugin.ps1"
+# 只看计划：
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\disable-plugin.ps1" -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\uninstall-plugin.ps1" -DryRun
+
+-- 检查补丁是否在 -----------------------------------------------------
+Select-String -Path "$lib\index.js"   -Pattern "installCwdVariable|CWD_PROMPT_VARIABLE"
+Select-String -Path "$lib\desktop.js" -Pattern "Get-ItemProperty -LiteralPath"
+
+-- 检查宿主注册了哪些 prompt 变量 -------------------------------------
+$dsh = Split-Path (Get-Command dsh.cmd).Source -Parent
+Select-String -Path "$dsh\node_modules\@deepseek-ai\dsh-agent-loop\lib\index.js" -Pattern 'systemPrompt\.variable\('
+
+-- 语法检查 -----------------------------------------------------------
+node --check "$lib\index.js"
+node --check "$lib\desktop.js"
+
+-- 硬链接检查（手工改文件前）------------------------------------------
+fsutil hardlink list "$lib\index.js"
+
+-- 恢复官方原版插件（重装会覆盖本地补丁）------------------------------
+dsh plugin --profile web add github:YuJunZhiXue/dsh-purge
+========================================================================

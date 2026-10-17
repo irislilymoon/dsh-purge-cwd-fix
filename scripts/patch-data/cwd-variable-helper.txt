@@ -1,0 +1,68 @@
+const CWD_PROMPT_VARIABLE = "cwd";
+
+/** 组装期解析当前工作目录；任何异常都退回启动目录，变量必须有字符串值。 */
+function promptCwdFor(ctx, context) {
+  try {
+    const session = context?.agent?.session;
+    if (session) {
+      const service = typeof ctx?.get === "function" ? ctx.get("workingDirectory") : undefined;
+      if (service && typeof service.get === "function") {
+        const live = String(service.get(session) || "").trim();
+        if (live) return live;
+      }
+      const recorded = String(session?.header?.cwd || "").trim();
+      if (recorded) return recorded;
+    }
+  } catch { /* 变量补齐永不阻断组装 */ }
+  try { return process.cwd(); } catch { return ""; }
+}
+
+/** 与 addPromptSection 同源的多 ctx 注册；宿主已注册同名变量时保留宿主实现。 */
+function addPromptVariable(ctx, name, provider) {
+  const hosts = [];
+  const push = (host) => {
+    if (host && !hosts.includes(host)) hosts.push(host);
+  };
+  try { push(ctx?.systemPrompt?.ctx); } catch { /* 代理未注入时点属性会抛 */ }
+  push(ctx);
+  const disposers = [];
+  let covered = false;
+  for (const host of hosts) {
+    try {
+      const prompt = host?.systemPrompt;
+      if (!prompt || typeof prompt.variable !== "function") continue;
+      const d = prompt.variable(name, provider);
+      covered = true;
+      if (typeof d === "function") disposers.push(d);
+    } catch (error) {
+      const msg = String(error && error.message || error);
+      if (msg.includes("already registered")) covered = true;
+      else console.warn(`[dsh-purge] prompt variable ${name}: ${msg}`);
+    }
+  }
+  if (disposers.length && typeof ctx?.effect === "function") {
+    try {
+      ctx.effect(() => () => {
+        for (const d of disposers) {
+          try { d(); } catch { /* ignore */ }
+        }
+      });
+    } catch { /* 死 ctx */ }
+  }
+  return covered;
+}
+
+/**
+ * DSH 0.2.1-alpha 起 prompt 插值只注册 provider/model，不再注册 cwd。
+ * 插件自己写的 `Your working directory is {{cwd}}.` 在渲染阶段会整段抛
+ * unknown prompt variable，导致每一轮都「本轮运行失败」。这里把 cwd 补回
+ * 变量层，保持旧宿主的行为；注册失败只告警，不拖垮插件。
+ */
+function installCwdVariable(ctx) {
+  if (!ctx || ctx.__dshPurgeCwdVariable) return;
+  let covered = false;
+  try {
+    covered = addPromptVariable(ctx, CWD_PROMPT_VARIABLE, (context) => promptCwdFor(ctx, context));
+  } catch { covered = false; }
+  if (covered) ctx.__dshPurgeCwdVariable = true;
+}
